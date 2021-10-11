@@ -1,0 +1,122 @@
+#!/usr/bin/env bash
+
+trap 'exit 0' INT
+
+log=./compress-video.log
+ffmpeg_log=./compress-video-ffmpeg.log
+minimal_video_size=1M
+
+echo >> $log
+echo >> $ffmpeg_log
+echo $(date) >> $log
+echo $(date) >> $ffmpeg_log
+echo >> $log
+echo >> $ffmpeg_log
+
+parameters="$*"
+
+compress_videos(){
+	for file in *; do
+	    compress_video "$file"
+	done
+}
+
+compress_video(){
+    file="$1"
+    if [ -d "$file" ]; then
+		if cd "$file"; then
+		    echo "Processing files in folder $(pwd)/$file"
+			echo "Processing files in folder $(pwd)/$file" >> $log
+		    compress_videos
+		    cd ..
+		else
+		    echo Skipping folder "$(pwd)/$file"
+			echo Skipping folder "$(pwd)/$file" >> $log
+		    return
+		fi
+	fi
+
+	#result=$(find . -name "$file" -size +500M -mtime +40)
+	#result=$(find . -name "$file" -size +100M)
+	#result=$(find . -name "$file" -size +100M -mtime +3)
+	if [ s"$parameters" == s"" ]; then
+		result=$(find . -name "$file" -size +"$minimal_video_size")
+	else
+		result=$(find . -name "$file" $parameters)
+	fi
+	if [ s"$result" == s"" ]; then
+		echo Skipping "$file ($(ls -lh "$file"))" due to not meet the criteria >> $log
+		return
+	fi
+
+	echo Processing "$file ($(ls -lh "$file"))" >> $log
+
+	dot_count_file_name="$(echo $file | awk -F "." '{print NF}')"
+	dot_count_file_base_name="$(echo $file | awk -F "." '{print NF-1}')"
+	file_base_name="$(echo $file | cut -d "." -f1-$dot_count_file_base_name)"
+	file_suffix="$(echo $file | cut -d "." -f$dot_count_file_name)"
+	new_file="$file_base_name-compressed.$file_suffix"
+
+	# Skip those have been handled videos
+	if [[ "$file_base_name" == *-compressed ]]; then
+		echo Skipping compressed "$file ($(ls -lh "$file"))" >> $log       
+		return
+	fi
+
+	# Skip wmv videos
+	if [ $file_suffix == "wmv" ]; then
+		echo Skipping "$file ($(ls -lh "$file"))" for wmv format >> $log
+		return
+	fi
+
+	# Skip partial video files
+	if [ $file_suffix == "part" ]; then
+		echo Skipping partial video file "$file ($(ls -lh "$file"))" >> $log
+		return
+	fi
+
+	# Skip non-video files
+	ffprobe -v error "$file"
+	if [ $? != 0 ]; then
+		echo Skipping non-video file "$file"
+		return
+	fi
+
+	# Compress video
+	echo Compressing "$file ($(ls -lh "$file"))"
+	echo Compressing "$file ($(ls -lh "$file"))" >> $log
+	if [ -e "$new_file" ]; then
+		echo Found compressed file "$new_file ($(ls -lh "$new_file"))"
+	fi
+	if [ x"$1" == x"-l" ]; then
+		#nice -19 cpulimit -l 200 -- ffmpeg -stats -loglevel repeat+level+error -i "$file" -vcodec libx265 -crf 24 "$(echo "$file"| awk -F "." '{print $1"-compressed."$2}')" && :>"$file"
+		nice -19 cpulimit -l 200 -- ffmpeg -stats -loglevel repeat+level+error -i "$file" -vcodec libx265 -crf 24 "$new_file"
+	else
+		#ffmpeg -stats -loglevel repeat+level+error -i "$file" -vcodec libx265 -crf 24 "$(echo "$file"| awk -F "." '{print $1"-compressed."$2}')" && :>"$file"
+		ffmpeg -stats -loglevel repeat+level+error -i "$file" -vcodec libx265 -crf 24 "$new_file"
+	fi
+
+	# Check the result of compressing video
+	if [ $? != 0 ]; then
+		echo Failed to compress file "$file ($(ls -lh "$file"))"
+		echo Failed to compress file "$file ($(ls -lh "$file"))" >> $log
+		return
+	fi
+
+	# Check the size of new file after compressing successfully
+	old_file_size=$(du "$file" | cut -f 1)
+	new_file_size=$(du "$new_file" | cut -f 1)
+	if [ $new_file_size -lt $old_file_size ]; then
+	echo Compressed "$new_file ($(ls -lh "$new_file"))"
+		echo Compressed "$new_file ($(ls -lh "$new_file"))" >> $log
+		:>"$file"
+	else
+		echo Skipping "$file" due to the compressed video "(which file size is "$new_file_size")" is larger than the old one "(which file size is "$old_file_size")" >> $log
+		:>"$new_file"
+	fi
+	echo
+	echo
+	
+}
+
+compress_videos
